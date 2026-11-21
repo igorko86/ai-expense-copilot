@@ -1,0 +1,22 @@
+# Java & Maven
+backend/target/
+backend/.mvn/
+*.jar
+*.war
+*.log
+
+# Node & React
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE & OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Environment & Secrets
+.env
+*.env

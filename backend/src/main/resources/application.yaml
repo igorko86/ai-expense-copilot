@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: expense-copilot-backend
+  threads:
+    virtual:
+      enabled: true # Віртуальні потоки Java 21
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/expense_db
+    username: postgres
+    password: postgres
+
+  jpa:
+    hibernate:
+      ddl-auto: validate # Структура таблиць перевіряється згідно з міграціями Flyway
+    show-sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  ai:
+    ollama:
+      base-url: http://localhost:11434 # Стандартний порт локальної Ollama
+      chat:
+        options:
+          model: llama3.2:latest # Вкажіть ту модель, яку завантажили
+          temperature: 0.1 # Низька температура робить відповіді максимально точними для парсингу та JSON
+      embedding:
+        options:
+          model: mxbai-embed-large:latest # Модель для майбутнього RAG
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 1024 # Точний розмір векторів моделі mxbai-embed-large
+        initialize-schema: false # Таблицю створимо самі через Flyway!
+    mcp:
+      server:
+        name: expense-copilot-mcp
+        version: 1.0.0
+        type: SYNC
