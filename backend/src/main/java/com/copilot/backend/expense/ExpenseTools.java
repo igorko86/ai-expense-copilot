@@ -31,4 +31,13 @@ public class ExpenseTools {
                 .map(Expense::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
+
+    @Tool(description = "Calculate the exact total amount spent for a specific category (e.g. FOOD, TRANSPORT, ENTERTAINMENT)")
+    public BigDecimal getTotalSpendingByCategory(
+            @ToolParam(description = "Expense category in uppercase, e.g. FOOD, TRANSPORT") String category) {
+        return expenseRepository.findByCategoryIgnoreCase(category).stream()
+                .map(Expense::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
 }

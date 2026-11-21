@@ -9,7 +9,7 @@ public class CorsConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/api/**") // Дозволяємо CORS для всіх ендпоінтів, що починаються на /api/
+        registry.addMapping("/**") // Дозволяємо CORS для всіх ендпоінтів, що починаються на /api/
                 .allowedOrigins("http://localhost:5173") // Порт вашого Vite + React
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")

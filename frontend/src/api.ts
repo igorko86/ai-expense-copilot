@@ -24,6 +24,7 @@ export async function parseAndSaveExpense(text: string): Promise<Expense> {
     body: JSON.stringify({ text }),
   });
   if (!res.ok) throw new Error('Failed to parse expense');
+  console.log(res);
   return res.json();
 }
 

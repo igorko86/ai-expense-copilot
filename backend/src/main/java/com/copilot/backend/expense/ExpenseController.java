@@ -30,8 +30,9 @@ public class ExpenseController {
     }
 
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> chatStream(@RequestParam String question) {
-        return expenseService.askAssistantStream(question);
+    public Flux<String> chatStream(@RequestParam String question,
+                                   @RequestParam(defaultValue = "default") String chatId) {
+        return expenseService.askAssistantStream(chatId, question);
     }
 
     @GetMapping

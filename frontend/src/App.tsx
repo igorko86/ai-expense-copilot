@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Send, PlusCircle, FileUp, Bot, Wallet } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
  type Expense,
   fetchExpenses,
@@ -14,7 +15,7 @@ import './App.css';
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 export function App() {
-  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const queryClient = useQueryClient();
   const [rawText, setRawText] = useState('');
   const [isParsing, setIsParsing] = useState(false);
 
@@ -25,18 +26,24 @@ export function App() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
 
-  useEffect(() => {
-    loadExpenses();
-  }, []);
+  // 1. Замість useEffect + useState: автоматичне завантаження та кешування витрат
+  const { data: expenses = [], isLoading: isExpensesLoading } = useQuery<Expense[]>({
+    queryKey: ['expenses'],
+    queryFn: fetchExpenses,
+  });
 
-  async function loadExpenses() {
-    try {
-      const data = await fetchExpenses();
-      setExpenses(data);
-    } catch (err) {
-      console.error(err);
-    }
-  }
+  // 2. Мутація для створення нової витрати через AI-парсер
+  const parseMutation = useMutation({
+    mutationFn: parseAndSaveExpense,
+    onSuccess: () => {
+      // Після успішного збереження в PostgreSQL автоматично оновлюємо список і графік!
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      setRawText('');
+    },
+    onError: () => {
+      alert('Помилка парсингу витрати. Перевір, чи запущений Java-бекенд.');
+    },
+  });
 
   // Агрегуємо витрати по категоріях для графіка Recharts
   const chartData = useMemo(() => {
@@ -50,16 +57,7 @@ export function App() {
   async function handleAddExpense(e: React.FormEvent) {
     e.preventDefault();
     if (!rawText.trim()) return;
-    setIsParsing(true);
-    try {
-      const created = await parseAndSaveExpense(rawText);
-      setExpenses((prev) => [created, ...prev]);
-      setRawText('');
-    } catch {
-      alert('Помилка парсингу витрати. Перевір, чи запущений Java-бекенд.');
-    } finally {
-      setIsParsing(false);
-    }
+    parseMutation.mutate(rawText);
   }
 
   async function handleSendQuestion(e: React.FormEvent) {
@@ -135,10 +133,10 @@ export function App() {
                 placeholder="Наприклад: Кава та круасан 165 грн сьогодні"
                 value={rawText}
                 onChange={(e) => setRawText(e.target.value)}
-                disabled={isParsing}
+                disabled={parseMutation.isPending}
               />
-              <button type="submit" disabled={isParsing}>
-                {isParsing ? 'Аналіз...' : 'Додати'}
+              <button type="submit" disabled={parseMutation.isPending}>
+                {parseMutation.isPending ? 'Аналіз...' : 'Додати'}
               </button>
             </form>
           </div>
@@ -185,13 +183,33 @@ export function App() {
         <div className="card">
           <h2><Bot size={20} color="#2563eb" /> AI Асистент (SQL Tools + RAG)</h2>
           <div className="chat-box">
-            {messages.map((m, i) => (
-              <div key={i} className={`msg ${m.role}`}>
-                {m.text}
-              </div>
-            ))}
-            {isChatLoading && <div className="msg ai">Думаю та перевіряю базу...</div>}
+            {messages.map((m, i) => {
+              const hasChart = m.text.includes('[RENDER_CHART]');
+              const cleanText = m.text.replace('[RENDER_CHART]', '').trim();
+
+              return (
+                <div key={i} className={`msg ${m.role}`} style={{ width: hasChart ? '100%' : 'auto' }}>
+                  {cleanText && <div>{cleanText}</div>}
+                  {hasChart && chartData.length > 0 && (
+                    <div style={{ width: '100%', height: 200, marginTop: '10px', background: '#f8fafc', borderRadius: '8px', padding: '8px' }}>
+                      <ResponsiveContainer>
+                        <PieChart>
+                          <Pie data={chartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={60} label>
+                            {chartData.map((_, idx) => (
+                              <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {isChatLoading && <div className="msg ai">Аналізую дані...</div>}
           </div>
+
 
           <form onSubmit={handleSendQuestion} className="input-row">
             <input
