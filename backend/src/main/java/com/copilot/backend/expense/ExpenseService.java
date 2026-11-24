@@ -127,13 +127,6 @@ public class ExpenseService {
     }
 
     public Flux<String> askAssistantStream(String chatId, String question) {
-        List<Document> similarDocs = vectorStore.similaritySearch(
-                SearchRequest.builder().query(question).topK(3).build()
-        );
-
-        String documentContext = similarDocs.stream()
-                .map(Document::getText)
-                .collect(Collectors.joining("\n---\n"));
 
         // 2. Дістаємо історію поточного чату (беремо останні 10 повідомлень, щоб не переповнити контекст)
         List<Message> history = chatHistory.computeIfAbsent(chatId, k -> new ArrayList<>());
@@ -142,44 +135,105 @@ public class ExpenseService {
                 : new ArrayList<>(history);
         // Додаємо нове питання користувача в історію
         history.add(new UserMessage(question));
+        // 2. АГЕНТ-МАРШРУТИЗАТОР (ROUTER): визначає, який спеціаліст потрібен для цього запиту
+        RouteDecisionDto decision = chatClient.prompt()
+                .system("""
+                        You are a routing dispatcher in a multi-agent financial system.
+                        Analyze the user's question and route it to the best specialist:
+                        - SQL_ANALYST: questions about personal expenses, spending totals, specific purchased items (e.g. coffee, bread), categories, or charts.
+                        - DOCUMENT_EXPERT: questions about uploaded PDF files, receipts details in PDFs, terms, or documents.
+                        - GENERAL_ADVISOR: greetings, general budgeting tips, or questions not requiring database or PDFs.
+                        """)
+                .user(question)
+                .call()
+                .entity(RouteDecisionDto.class);
+        AgentType selectedAgent = (decision != null && decision.targetAgent() != null)
+                ? decision.targetAgent()
+                : AgentType.SQL_ANALYST;
+
+        log.info("🧭 Router обрав агента: {} (Причина: {})", selectedAgent, decision != null ? decision.reason() : "default");
 
         // Буфер для збирання повної відповіді ШІ зі стріму, щоб зберегти її в історію
         StringBuilder fullResponseBuffer = new StringBuilder();
-        // 1. Перевіряємо звичайним Java-кодом, чи просить користувач графік
+
+        // 3. ДЕЛЕГУВАННЯ ЗАДАЧІ КОНКРЕТНОМУ СПЕЦІАЛІСТУ (switch-конструкція Java 21)
+        Flux<String> responseStream = switch (selectedAgent) {
+            case SQL_ANALYST -> runSqlAnalystAgent(question, recentHistory);
+            case DOCUMENT_EXPERT -> runDocumentExpertAgent(question, recentHistory);
+            case GENERAL_ADVISOR -> runGeneralAdvisorAgent(question, recentHistory);
+        };
+
+        // Повертаємо потік токенів на фронтенд і зберігаємо фінальну відповідь у пам'ять
+        return responseStream
+                .doOnNext(fullResponseBuffer::append)
+                .doOnComplete(() -> history.add(new AssistantMessage(fullResponseBuffer.toString())));
+
+    }
+
+    // --- СПЕЦІАЛІСТ №1: SQL-Аналітик (має доступ ТІЛЬКИ до інструментів БД, без зайвого RAG-тексту) ---
+    private Flux<String> runSqlAnalystAgent(String question, List<Message> history) {
         String lowerQuestion = question.toLowerCase();
         boolean isChartRequested = lowerQuestion.contains("графік")
                 || lowerQuestion.contains("діаграм")
                 || lowerQuestion.contains("chart")
                 || lowerQuestion.contains("graph");
 
-        // 2. Інструкцію про тег [RENDER_CHART] додаємо в промпт ТІЛЬКИ якщо користувач реально попросив графік
         String chartInstruction = isChartRequested
                 ? "The user asked for a visual chart. You MUST append the exact token [RENDER_CHART] at the very end of your response."
                 : "Do NOT output [RENDER_CHART] under any circumstances.";
 
         return chatClient.prompt()
                 .system("""
-                        You are a helpful personal finance assistant.
-                        Use the provided tools to fetch real expense data from the database.
-                        Use the retrieved document context below to answer questions about uploaded PDFs or rules.
-                        Do not guess or make up numbers.
-                        Answer in the same language as the user's question (e.g., Ukrainian or English).
-                        
-                        DOCUMENT CONTEXT:
+                        You are a strict SQL Data Analyst.
+                        Use the provided database tools to fetch exact expense figures. Never guess numbers.
+                        Answer in the same language as the user's question (Ukrainian or English).
                         %s
-                        """.formatted(chartInstruction, documentContext.isEmpty() ? "No documents uploaded yet." : documentContext))
-                .messages(recentHistory) // <-- Передаємо історію попередніх повідомлень!
+                        """.formatted(chartInstruction))
+                .messages(history)
                 .user(question)
-                .tools(expenseTools)
-                .stream() // <-- Замість .call() викликаємо .stream()
-                .content()
-                .doOnNext(fullResponseBuffer::append) // Накопичуємо кожен токен;
-                .doOnComplete(() -> {
-                    // Коли відповідь повністю згенерована — зберігаємо її в історію чату
-                    history.add(new AssistantMessage(fullResponseBuffer.toString()));
-                });
+                .tools(expenseTools) // <-- Підключаємо ТІЛЬКИ SQL-інструменти
+                .stream()
+                .content();
     }
 
+    // --- СПЕЦІАЛІСТ №2: Документ-Експерт (має доступ ТІЛЬКИ до векторної бази PDF, без SQL-інструментів) ---
+    private Flux<String> runDocumentExpertAgent(String question, List<Message> history) {
+        List<Document> similarDocs = vectorStore.similaritySearch(
+                SearchRequest.builder().query(question).topK(3).build()
+        );
+        String documentContext = similarDocs.stream()
+                .map(Document::getText)
+                .collect(Collectors.joining("\n---\n"));
+
+        return chatClient.prompt()
+                .system("""
+                        You are a Document & RAG Specialist.
+                        Answer the user's question based strictly on the uploaded PDF context below.
+                        If the context is empty or doesn't contain the answer, say so honestly.
+                        Answer in the same language as the user's question.
+
+                        DOCUMENT CONTEXT:
+                        %s
+                        """.formatted(documentContext.isEmpty() ? "No documents uploaded yet." : documentContext))
+                .messages(history)
+                .user(question)
+                .stream() // <-- Зверніть увагу: тут немає .tools(expenseTools), щоб модель не плуталася!
+                .content();
+    }
+
+    // --- СПЕЦІАЛІСТ №3: Загальний фінансовий радник (легкий та швидкий, без БД і без векторів) ---
+    private Flux<String> runGeneralAdvisorAgent(String question, List<Message> history) {
+        return chatClient.prompt()
+                .system("""
+                        You are a friendly personal finance advisor.
+                        Help the user with general budgeting advice or respond politely to greetings.
+                        Answer in the same language as the user's question.
+                        """)
+                .messages(history)
+                .user(question)
+                .stream()
+                .content();
+    }
     public List<Expense> getAllExpenses() {
         return expenseRepository.findAll();
     }
