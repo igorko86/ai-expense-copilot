@@ -17,7 +17,7 @@ export async function fetchExpenses(): Promise<Expense[]> {
   return res.json();
 }
 
-export async function parseAndSaveExpense(text: string): Promise<Expense> {
+export async function parseAndSaveExpense(text: string): Promise<Expense[]> {
   const res = await fetch(`${EXPENSES}/parse`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

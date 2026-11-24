@@ -19,7 +19,7 @@ public class ExpenseController {
     public record ChatResponse(String answer) {}
 
     @PostMapping("/parse")
-    public Expense parseExpense(@RequestBody ParseRequest request) {
+    public List<Expense> parseExpense(@RequestBody ParseRequest request) {
         return expenseService.parseAndSave(request.text());
     }
 

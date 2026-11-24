@@ -1,6 +1,7 @@
 package com.copilot.backend.expense;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -20,6 +21,7 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ExpenseService {
 
     private final ChatClient chatClient;
@@ -30,31 +32,73 @@ public class ExpenseService {
     // Зберігаємо історію повідомлень для кожного чату (chatId -> список повідомлень)
     private final Map<String, List<Message>> chatHistory = new ConcurrentHashMap<>();
 
-    public Expense parseAndSave(String rawText) {
+    public List<Expense> parseAndSave(String rawText) {
         String today = LocalDate.now().toString();
+        ParsedExpenseDto currentParsed = null;
+        String criticFeedback = "";
 
-        ParsedExpenseDto parsed = chatClient.prompt()
-                .system("""
-                        You are a financial data extraction assistant.
-                        Extract expense details from the user's text.
-                        Today's date is %s. If the date is not mentioned or says 'today', use today's date.
-                        If currency is missing, assume UAH.
-                        Classify category strictly into: FOOD, TRANSPORT, ENTERTAINMENT, UTILITIES, or OTHER.
-                        """.formatted(today))
-                .user(rawText)
-                .call()
-                .entity(ParsedExpenseDto.class);
+        // Запускаємо цикл самоперевірки (максимум 3 спроби, щоб уникнути нескінченного циклу!)
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            log.info("🔄 Спроба парсингу №" + attempt);
+            boolean hasFeedback = criticFeedback != null && !criticFeedback.isBlank();
+            // 1. АГЕНТ-ВИКОНАВЕЦЬ: витягує або виправляє дані з урахуванням критики
+            String promptForWorker = !hasFeedback
+                    ? rawText
+                    : "Original text: '%s'. Your previous extraction was: %s. Fix it based on this feedback: %s"
+                    .formatted(rawText, currentParsed, criticFeedback);
 
-        Expense expense = new Expense(
-                parsed.description(),
-                parsed.amount(),
-                parsed.currency() != null ? parsed.currency().toUpperCase() : "UAH",
-                parsed.category() != null ? parsed.category().toUpperCase() : "OTHER",
-                parsed.expenseDate() != null ? parsed.expenseDate() : LocalDate.now()
-        );
+            currentParsed = chatClient.prompt()
+                    .system("""
+                            You are a financial data extraction assistant.
+                            Extract the store/description and a list of ALL individual item prices into 'itemAmounts'.
+                            For example, if text says 'bread 30, milk 45, coffee 120', itemAmounts MUST be.
+                            Today's date is %s. If currency is missing, assume UAH.
+                            Classify category strictly into: FOOD, TRANSPORT, ENTERTAINMENT, UTILITIES, or OTHER.
+                            """.formatted(today))
+                    .user(promptForWorker)
+                    .call()
+                    .entity(ParsedExpenseDto.class);
 
-        return expenseRepository.save(expense);
-    }
+            // 2. АГЕНТ-КРИТИК: перевіряє роботу першого агента
+            AuditResultDto audit = chatClient.prompt()
+                    .system("""
+                            You are a strict financial auditor. Compare the original user text with the extracted JSON data.
+                            Check if:
+                            1) The total amount is mathematically correct (sum of all items in the text).
+                            2) The category is logical (e.g., coffee/groceries = FOOD, taxi = TRANSPORT).
+                            3) The currency is correct.
+                            """)
+                    .user("Original text: '%s'\nExtracted data: %s".formatted(rawText, currentParsed))
+                    .call()
+                    .entity(AuditResultDto.class);
+
+            // Якщо Критик схвалив результат — виходимо з циклу (break)!
+            if (audit != null &&  Boolean.TRUE.equals(audit.approved())) {
+                log.info("✅ Аудит пройдено успішно на спробі №" + attempt);
+                break;
+            }
+
+            // Якщо є зауваження — записуємо їх для наступної ітерації циклу
+            criticFeedback = audit != null ? audit.feedback() : "Check math and category again.";
+            log.info("⚠️ Критик знайшов помилку: " + criticFeedback);
+        }
+
+            log.info("⚠️ currentParsed: " + currentParsed);
+        // Фільтруємо можливі "порожні" галюцинації моделі без ціни або назви перед записом у БД
+        List<Expense> expensesToSave = currentParsed.items().stream()
+                .filter(item -> item.description() != null && !item.description().isBlank())
+                .filter(item -> item.amount() != null)
+                .map(item -> new Expense(
+                        item.description(),
+                        item.amount(),
+                        item.currency() != null ? item.currency().toUpperCase() : "UAH",
+                        item.category() != null ? item.category().toUpperCase() : "OTHER",
+                        item.expenseDate() != null ? item.expenseDate() : LocalDate.now()
+                ))
+                .toList();
+
+        log.info("✅ Зберігаємо в базу окремих позицій: " + expensesToSave.size());
+        return expenseRepository.saveAll(expensesToSave);    }
 
     public String askAssistant(String question) {
         List<Document> similarDocs = vectorStore.similaritySearch(

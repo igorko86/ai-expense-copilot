@@ -39,5 +39,12 @@ public class ExpenseTools {
                 .map(Expense::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
+    @Tool(description = "Calculate the exact total amount spent on a specific item or keyword in description (e.g. 'coffee', 'кава', 'milk', 'taxi', 'bread')")
+    public BigDecimal getTotalSpendingByItemName(
+            @ToolParam(description = "Keyword or item name to search in expense descriptions, e.g. 'coffee' or 'кава'") String itemName) {
+        return expenseRepository.findByDescriptionContainingIgnoreCase(itemName).stream()
+                .map(Expense::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
 
 }
