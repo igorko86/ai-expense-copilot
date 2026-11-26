@@ -1,5 +1,6 @@
 package com.copilot.backend.document;
 
+import com.copilot.backend.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
@@ -15,6 +16,7 @@ import java.util.List;
 public class DocumentService {
 
     private final VectorStore vectorStore;
+    private final SecurityUtils securityUtils;
 
     public int ingestPdf(Resource pdfResource) {
         // 1. Читаємо текст по сторінках із PDF
@@ -28,6 +30,9 @@ public class DocumentService {
                 .withKeepSeparator(true)
                 .build();
         List<Document> chunks = textSplitter.apply(rawDocuments);
+
+        String userId = securityUtils.getCurrentUserId().toString();
+        chunks.forEach(doc -> doc.getMetadata().put("userId", userId));
 
         // 3. Відправляємо шматки в Ollama (mxbai-embed-large) і зберігаємо вектори в PostgreSQL
         vectorStore.add(chunks);

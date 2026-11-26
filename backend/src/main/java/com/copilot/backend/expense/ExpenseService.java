@@ -1,5 +1,7 @@
 package com.copilot.backend.expense;
 
+import com.copilot.backend.security.SecurityUtils;
+import com.copilot.backend.user.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -28,6 +30,7 @@ public class ExpenseService {
     private final ExpenseRepository expenseRepository;
     private final ExpenseTools expenseTools;
     private final VectorStore vectorStore;
+    private final SecurityUtils securityUtils;
 
     // Зберігаємо історію повідомлень для кожного чату (chatId -> список повідомлень)
     private final Map<String, List<Message>> chatHistory = new ConcurrentHashMap<>();
@@ -85,6 +88,7 @@ public class ExpenseService {
 
             log.info("⚠️ currentParsed: " + currentParsed);
         // Фільтруємо можливі "порожні" галюцинації моделі без ціни або назви перед записом у БД
+        User currentUser = securityUtils.getCurrentUser();
         List<Expense> expensesToSave = currentParsed.items().stream()
                 .filter(item -> item.description() != null && !item.description().isBlank())
                 .filter(item -> item.amount() != null)
@@ -93,19 +97,24 @@ public class ExpenseService {
                         item.amount(),
                         item.currency() != null ? item.currency().toUpperCase() : "UAH",
                         item.category() != null ? item.category().toUpperCase() : "OTHER",
-                        item.expenseDate() != null ? item.expenseDate() : LocalDate.now()
+                        item.expenseDate() != null ? item.expenseDate() : LocalDate.now(),
+                        currentUser
                 ))
                 .toList();
 
+
         log.info("✅ Зберігаємо в базу окремих позицій: " + expensesToSave.size());
-        return expenseRepository.saveAll(expensesToSave);    }
+        return expenseRepository.saveAll(expensesToSave);
+    }
 
     public String askAssistant(String question) {
+        String userId = securityUtils.getCurrentUserId().toString();
         List<Document> similarDocs = vectorStore.similaritySearch(
                 SearchRequest
                         .builder()
                         .query(question)
                         .topK(4)
+                        .filterExpression("userId == '" + userId + "'")
                         .build()
         );
         List<String> contentList = similarDocs.stream().map(Document::getText).toList();
@@ -127,9 +136,10 @@ public class ExpenseService {
     }
 
     public Flux<String> askAssistantStream(String chatId, String question) {
-
+        Long userId = securityUtils.getCurrentUserId();
+        String scopedChatId = userId + ":" + chatId;
         // 2. Дістаємо історію поточного чату (беремо останні 10 повідомлень, щоб не переповнити контекст)
-        List<Message> history = chatHistory.computeIfAbsent(chatId, k -> new ArrayList<>());
+        List<Message> history = chatHistory.computeIfAbsent(scopedChatId, k -> new ArrayList<>());
         List<Message> recentHistory = history.size() > 10
                 ? new ArrayList<>(history.subList(history.size() - 10, history.size()))
                 : new ArrayList<>(history);
@@ -198,8 +208,14 @@ public class ExpenseService {
 
     // --- СПЕЦІАЛІСТ №2: Документ-Експерт (має доступ ТІЛЬКИ до векторної бази PDF, без SQL-інструментів) ---
     private Flux<String> runDocumentExpertAgent(String question, List<Message> history) {
+        String userId = securityUtils.getCurrentUserId().toString();
+
         List<Document> similarDocs = vectorStore.similaritySearch(
-                SearchRequest.builder().query(question).topK(3).build()
+                SearchRequest.builder()
+                        .query(question)
+                        .topK(3)
+                        .filterExpression("userId == '" + userId + "'")
+                        .build()
         );
         String documentContext = similarDocs.stream()
                 .map(Document::getText)
@@ -235,6 +251,8 @@ public class ExpenseService {
                 .content();
     }
     public List<Expense> getAllExpenses() {
-        return expenseRepository.findAll();
+        Long id = securityUtils.getCurrentUserId();
+
+        return expenseRepository.findAllByUserId(id);
     }
 }

@@ -19,6 +19,12 @@ spring:
     enabled: true
     baseline-on-migrate: true
 
+  jwt:
+    # Будь-який довгий випадковий рядок (мінімум 32 символи)
+    secret: ${JWT_SECRET:super-secret-key-for-expense-copilot-app-2026-must-be-long}
+    # Час життя токена в мілісекундах (86400000 мс = 24 години)
+    expiration: 86400000
+
   ai:
     ollama:
       base-url: http://localhost:11434 # Стандартний порт локальної Ollama
