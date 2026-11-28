@@ -1,6 +1,7 @@
 package com.copilot.backend.expense;
 
 import com.copilot.backend.user.User;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -35,7 +36,10 @@ public class Expense {
     // Порожній конструктор обов'язковий для JPA (Hibernate)
     public Expense() {
     }
-    @ManyToOne @JoinColumn(name = "user_id") private User user;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    @JsonIgnore
+    private User user;
 
     // Конструктор для зручного створення об'єкта в коді
     public Expense(String description, BigDecimal amount, String currency, String category, LocalDate expenseDate, User user) {

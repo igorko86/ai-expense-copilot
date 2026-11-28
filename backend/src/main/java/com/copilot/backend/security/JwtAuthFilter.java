@@ -32,17 +32,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         final String authHeader = request.getHeader("Authorization");
 
-        // Якщо заголовка немає або він не починається з "Bearer " — просто пропускаємо запит далі
-        // (якщо ендпоінт захищений, Spring Security сам поверне 401/403)
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        final String jwt = authHeader.substring(7); // відрізаємо "Bearer "
+        final String jwt = authHeader.substring(7);
         final String userEmail = jwtService.extractUsername(jwt);
 
-        // Якщо email є в токені, і користувач ще не авторизований у поточному запиті
         if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
 
@@ -54,12 +51,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 );
                 authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
-                // Кладемо юзера в контекст запиту (аналог req.user = userDetails)
-                SecurityContextHolder.getContext().setAuthentication(authToken);
+                var context = SecurityContextHolder.createEmptyContext();
+                context.setAuthentication(authToken);
+                SecurityContextHolder.setContext(context);
             }
         }
 
-        // Передаємо керування далі по ланцюжку (аналог next() в Express)
         filterChain.doFilter(request, response);
     }
 }

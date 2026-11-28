@@ -1,6 +1,10 @@
 spring:
   application:
     name: expense-copilot-backend
+  logging:
+    level:
+      org.springframework.security: TRACE
+
   threads:
     virtual:
       enabled: true # Віртуальні потоки Java 21

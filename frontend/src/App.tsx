@@ -10,11 +10,14 @@ import {
   streamAiAssistant,
   uploadPdfDocument,
 } from './api';
+import { useAuth } from './context/AuthContext';
+import { AuthForm } from './components/AuthForm';
 import './App.css';
 
 const COLORS = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 export function App() {
+  const { token, email, logout } = useAuth();
   const queryClient = useQueryClient();
   const [rawText, setRawText] = useState('');
   const [isParsing, setIsParsing] = useState(false);
@@ -30,6 +33,7 @@ export function App() {
   const { data: expenses = [], isLoading: isExpensesLoading } = useQuery<Expense[]>({
     queryKey: ['expenses'],
     queryFn: fetchExpenses,
+    enabled: !!token,
   });
 
   // 2. Мутація для створення нової витрати через AI-парсер
@@ -105,9 +109,26 @@ export function App() {
     }
   }
 
+  const handleLogout = () => {
+    setMessages([
+      { role: 'ai', text: 'Привіт! Я твій фінансовий AI-асистент. Запитай мене про свої витрати або завантаж PDF-документ.' },
+    ]);
+    logout();
+  };
+
+  if (!token) {
+    return <AuthForm />;
+  }
+
   return (
     <div className="container">
       <header className="header">
+
+       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, padding: '12px 24px' }}>
+        <span>{email}</span>
+        <button onClick={handleLogout}>Вийти</button>
+      </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Wallet size={28} color="#2563eb" />
           <h1>AI Expense Copilot</h1>

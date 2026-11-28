@@ -48,8 +48,9 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 // 3. Правила доступу до URL (аналог public vs protected routes)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**").permitAll() // Реєстрація та логін відкриті для всіх
-                        .anyRequest().authenticated()                // Усі інші ендпоінти вимагають валідний JWT!
+                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers("/api/auth/**", "/error").permitAll()
+                        .anyRequest().authenticated()
                 )
                 // 4. Вимикаємо серверні сесії (Stateless API — кожен запит несе свій JWT)
                 .sessionManagement(session -> session
@@ -57,7 +58,17 @@ public class SecurityConfig {
                 )
                 .authenticationProvider(authenticationProvider())
                 // 5. Ставимо наш JwtAuthFilter ПЕРЕД стандартним фільтром перевірки пароля
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                .exceptionHandling(ex -> ex
+                .accessDeniedHandler((req, res, e) -> {
+                    System.out.println("ACCESS DENIED: " + e.getMessage());
+                    res.sendError(403, e.getMessage());
+                })
+                .authenticationEntryPoint((req, res, e) -> {
+                    System.out.println("AUTH ENTRY POINT: " + e.getMessage());
+                    res.sendError(401, e.getMessage());
+                })
+        );
 
         return http.build();
     }
@@ -102,9 +113,5 @@ public class SecurityConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
-    }
-    @Bean
-    public InitializingBean initializingBean() {
-        return () -> SecurityContextHolder.setStrategyName(SecurityContextHolder.MODE_INHERITABLETHREADLOCAL);
     }
 }
